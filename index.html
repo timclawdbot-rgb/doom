@@ -99,6 +99,68 @@
   const ammoBar = document.getElementById('ammoBar');
   const scoreBar = document.getElementById('scoreBar');
 
+  // --- Simple sound effects (no external assets) ---
+  // Uses WebAudio oscillators. Audio starts after first user gesture.
+  let audioCtx = null;
+  let audioEnabled = false;
+
+  function ensureAudio() {
+    if (audioCtx) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    audioCtx = new Ctx();
+  }
+
+  async function unlockAudio() {
+    try {
+      ensureAudio();
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') await audioCtx.resume();
+      audioEnabled = true;
+    } catch {
+      // ignore
+    }
+  }
+
+  function sfxTone(freq, dur = 0.08, type = 'square', gain = 0.06) {
+    if (!audioEnabled || !audioCtx) return;
+    const t0 = audioCtx.currentTime;
+    const osc = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+
+    osc.connect(g);
+    g.connect(audioCtx.destination);
+
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.02);
+  }
+
+  function sfxShoot() {
+    sfxTone(140, 0.06, 'square', 0.07);
+    sfxTone(90, 0.05, 'square', 0.05);
+  }
+  function sfxHit() {
+    sfxTone(520, 0.05, 'sawtooth', 0.05);
+  }
+  function sfxKill() {
+    sfxTone(260, 0.08, 'sawtooth', 0.06);
+    sfxTone(120, 0.10, 'triangle', 0.05);
+  }
+  function sfxHurt() {
+    sfxTone(70, 0.12, 'square', 0.06);
+  }
+  function sfxNoAmmo() {
+    sfxTone(240, 0.04, 'triangle', 0.03);
+    sfxTone(180, 0.05, 'triangle', 0.03);
+  }
+
   // World map: 0 empty, 1 wall, 2 door (treated as wall)
   // Keep it small and readable.
   const MAP = [
@@ -257,10 +319,15 @@
 
   function shoot() {
     if (shootCooldown > 0) return;
-    if (player.ammo <= 0) { msg.textContent = ' (click: out of ammo)'; return; }
+    if (player.ammo <= 0) {
+      msg.textContent = ' (click: out of ammo)';
+      sfxNoAmmo();
+      return;
+    }
 
     shootCooldown = 0.22;
     player.ammo -= 1;
+    sfxShoot();
 
     // hitscan: find closest enemy near crosshair line-of-sight
     const aim = player.a;
@@ -294,11 +361,13 @@
       best.hp -= 20;
       if (best.hp <= 0) {
         player.score += 100;
+        sfxKill();
         // respawn after a beat
         enemies.splice(enemies.indexOf(best), 1);
         spawnEnemy();
       } else {
         player.score += 10;
+        sfxHit();
       }
       syncHud();
     }
@@ -320,6 +389,7 @@
           e.cooldown = 0.6;
           player.hp -= 8;
           player.hurtT = 0.25;
+          sfxHurt();
           if (player.hp <= 0) {
             player.hp = 0;
             running = false;
@@ -612,12 +682,15 @@
   document.addEventListener('mousemove', onMouseMove);
 
   canvas.addEventListener('click', async () => {
+    // User gesture: unlock audio + (optionally) pointer lock
+    await unlockAudio();
+
     if (!running) return;
     try {
       await canvas.requestPointerLock();
-      msg.textContent = ' (pointer locked)';
+      msg.textContent = audioEnabled ? ' (pointer locked + audio on)' : ' (pointer locked)';
     } catch {
-      msg.textContent = '';
+      msg.textContent = audioEnabled ? ' (audio on)' : '';
     }
   });
 
@@ -625,7 +698,8 @@
     if (document.pointerLockElement !== canvas) msg.textContent = '';
   });
 
-  btnStart.addEventListener('click', () => {
+  btnStart.addEventListener('click', async () => {
+    await unlockAudio();
     overlay.style.display = 'none';
     reset();
     running = true;
