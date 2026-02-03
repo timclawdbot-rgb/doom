@@ -90,10 +90,7 @@
 
     <div id="aim" class="pad"><div class="knob" id="aimKnob"></div></div>
 
-    <div id="btns" class="pad">
-      <div class="tbtn" id="btnRun">RUN</div>
-    </div>
-    <div id="hintTouch">Left stick: move • Right stick: aim • Tap right stick to shoot</div>
+    <div id="hintTouch">Left stick: move/strafe • Right stick: aim • Tap right stick to shoot</div>
   </div>
 
   <div id="hud">
@@ -241,8 +238,7 @@
   const touch = {
     forward: 0,  // -1..1 (up is +1)
     strafe: 0,   // -1..1
-    turn: 0,     // -1..1 (from swipe)
-    run: false,
+    turn: 0,     // -1..1
     shootQueued: false,
   };
 
@@ -251,7 +247,6 @@
   const knob = document.getElementById('knob');
   const aim = document.getElementById('aim');
   const aimKnob = document.getElementById('aimKnob');
-  const btnRun = document.getElementById('btnRun');
 
   if (isMobile) {
     touchRoot.style.display = 'block';
@@ -359,15 +354,6 @@
 
     aim.addEventListener('pointerup', aimEnd);
     aim.addEventListener('pointercancel', aimEnd);
-
-    // Run button
-    btnRun.addEventListener('pointerdown', (e) => {
-      if (e.pointerType !== 'touch') return;
-      touch.run = true;
-      e.preventDefault();
-    });
-    btnRun.addEventListener('pointerup', () => { touch.run = false; });
-    btnRun.addEventListener('pointercancel', () => { touch.run = false; });
   }
 
   // Player
@@ -805,7 +791,7 @@
 
   function update(dt) {
     const turn = 2.4; // rad/s
-    const speed = (keys.Shift || touch.run) ? 3.0 : 2.0;
+    const speed = keys.Shift ? 3.0 : 2.0;
 
     // Keyboard turn
     if (keys.ArrowLeft) player.a -= turn * dt;
