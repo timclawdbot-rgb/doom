@@ -1,0 +1,637 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Doom-ish Raycaster (1993-style)</title>
+  <style>
+    :root{ --bg:#05070c; --fg:#e7eefc; --muted:#9aa0a6; --accent:#ff4d4d; }
+    body{ margin:0; background:var(--bg); color:var(--fg); font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial; overflow:hidden; }
+    #ui{ position:fixed; left:12px; top:10px; z-index:2; font-size:13px; color:var(--muted); user-select:none; }
+    #ui b{ color:var(--fg); }
+    #ui kbd{ font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      border:1px solid rgba(255,255,255,0.15); border-bottom-color:rgba(255,255,255,0.25);
+      padding:2px 6px; border-radius:6px; color:var(--fg);
+      background:rgba(255,255,255,0.05);
+    }
+    #hud{ position:fixed; left:0; right:0; bottom:0; height:92px;
+      background:linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,0.55) 35%, rgba(0,0,0,0.8));
+      display:flex; align-items:center; justify-content:center; gap:18px;
+      z-index:2;
+    }
+    .stat{ width:140px; text-align:center; }
+    .label{ font-size:12px; color:var(--muted); letter-spacing:0.5px; text-transform:uppercase; }
+    .value{ font-size:22px; font-weight:700; }
+    .bar{ height:10px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden; margin:6px 10px 0; }
+    .bar > div{ height:100%; width:50%; background:var(--accent); }
+
+    canvas{ display:block; width:100vw; height:100vh; image-rendering: pixelated; }
+
+    #overlay{ position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.55); z-index:3; text-align:center; padding:24px;
+    }
+    #overlay .card{ max-width:720px; background:rgba(10,12,18,0.85); border:1px solid rgba(255,255,255,0.12);
+      border-radius:18px; padding:18px 20px; }
+    #overlay h1{ margin:0 0 10px; font-size:18px; }
+    #overlay p{ margin:8px 0; color:var(--muted); }
+    #overlay button{ margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.18);
+      background:rgba(255,255,255,0.06); color:var(--fg); padding:10px 14px; cursor:pointer; }
+    #overlay button:hover{ border-color:rgba(255,255,255,0.3); }
+  </style>
+</head>
+<body>
+  <div id="ui">
+    <div><b>Doom-ish</b> (raycaster) — single-file demo</div>
+    <div>
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> move •
+      <kbd>←</kbd><kbd>→</kbd> turn •
+      <kbd>Shift</kbd> run •
+      <kbd>Space</kbd> shoot •
+      <kbd>P</kbd> pause
+    </div>
+    <div>Tip: click canvas to lock pointer (mouse look). <span id="msg"></span></div>
+  </div>
+
+  <canvas id="view" width="320" height="180" aria-label="Game view"></canvas>
+
+  <div id="hud">
+    <div class="stat">
+      <div class="label">Health</div>
+      <div class="value" id="hpText">100</div>
+      <div class="bar"><div id="hpBar"></div></div>
+    </div>
+    <div class="stat">
+      <div class="label">Ammo</div>
+      <div class="value" id="ammoText">50</div>
+      <div class="bar"><div id="ammoBar" style="background:#ffd74a"></div></div>
+    </div>
+    <div class="stat">
+      <div class="label">Score</div>
+      <div class="value" id="scoreText">0</div>
+      <div class="bar"><div id="scoreBar" style="background:#7aa2ff"></div></div>
+    </div>
+  </div>
+
+  <div id="overlay">
+    <div class="card">
+      <h1>Doom-ish (1993-style) — basic raycasting FPS</h1>
+      <p>This is not the real Doom engine — it's a lightweight <b>2.5D raycaster</b> that feels Doom/Wolfenstein-era.</p>
+      <p><b>Goal:</b> shoot the red "imps" (billboard sprites), avoid getting hit, survive and rack up score.</p>
+      <button id="btnStart" type="button">Start</button>
+    </div>
+  </div>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('view');
+  const ctx = canvas.getContext('2d', { alpha:false });
+
+  const overlay = document.getElementById('overlay');
+  const btnStart = document.getElementById('btnStart');
+  const msg = document.getElementById('msg');
+
+  const hpText = document.getElementById('hpText');
+  const ammoText = document.getElementById('ammoText');
+  const scoreText = document.getElementById('scoreText');
+  const hpBar = document.getElementById('hpBar');
+  const ammoBar = document.getElementById('ammoBar');
+  const scoreBar = document.getElementById('scoreBar');
+
+  // World map: 0 empty, 1 wall, 2 door (treated as wall)
+  // Keep it small and readable.
+  const MAP = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,1,1,1,0,1,1,1,1,1,0,1,1,0,1],
+    [1,0,1,0,0,0,0,0,0,0,1,0,0,1,0,1],
+    [1,0,1,0,1,1,1,0,1,0,1,1,0,1,0,1],
+    [1,0,0,0,1,0,0,0,1,0,0,0,0,1,0,1],
+    [1,0,1,0,1,0,1,1,1,1,1,1,0,1,0,1],
+    [1,0,1,0,0,0,1,0,0,0,0,1,0,0,0,1],
+    [1,0,1,1,1,0,1,0,1,1,0,1,1,1,0,1],
+    [1,0,0,0,1,0,0,0,1,0,0,0,0,1,0,1],
+    [1,0,1,0,1,1,1,0,1,0,1,1,0,1,0,1],
+    [1,0,1,0,0,0,0,0,0,0,1,0,0,1,0,1],
+    [1,0,1,1,1,0,1,1,1,1,1,0,1,1,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  ];
+
+  const MW = MAP[0].length;
+  const MH = MAP.length;
+
+  const keys = Object.create(null);
+  addEventListener('keydown', e => { keys[e.key] = true; if (e.key.toLowerCase()==='p') togglePause(); });
+  addEventListener('keyup', e => { keys[e.key] = false; });
+
+  // Player
+  const player = {
+    x: 2.5,
+    y: 2.5,
+    a: 0,            // angle
+    fov: Math.PI/3,  // 60deg
+    hp: 100,
+    ammo: 50,
+    score: 0,
+    hurtT: 0,
+  };
+
+  // Simple enemies (billboard sprites)
+  const enemies = [];
+  const bullets = []; // hitscan-ish with cooldown, but we keep tracers
+
+  let running = false;
+  let paused = false;
+  let last = 0;
+  let shootCooldown = 0;
+
+  function cell(x, y) {
+    const xi = x|0, yi = y|0;
+    if (xi < 0 || yi < 0 || xi >= MW || yi >= MH) return 1;
+    return MAP[yi][xi];
+  }
+
+  function isWall(x, y) {
+    return cell(x, y) !== 0;
+  }
+
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  function reset() {
+    // Start in an empty cell (was 2.5,2.5 which is inside a wall)
+    player.x = 1.5;
+    player.y = 1.5;
+    player.a = 0;
+    player.hp = 100;
+    player.ammo = 50;
+    player.score = 0;
+    player.hurtT = 0;
+
+    enemies.length = 0;
+    bullets.length = 0;
+
+    for (let i=0;i<8;i++) spawnEnemy();
+
+    shootCooldown = 0;
+    paused = false;
+    syncHud();
+  }
+
+  function spawnEnemy() {
+    // Find empty spot away from player
+    for (let tries=0; tries<200; tries++) {
+      const x = 1 + Math.random()*(MW-2);
+      const y = 1 + Math.random()*(MH-2);
+      if (isWall(x, y)) continue;
+      const dx = x - player.x, dy = y - player.y;
+      if (dx*dx + dy*dy < 12) continue;
+      enemies.push({ x, y, hp: 30, t: Math.random()*10, cooldown: 0 });
+      return;
+    }
+  }
+
+  function raycast(px, py, ang) {
+    // DDA grid stepping
+    const sin = Math.sin(ang), cos = Math.cos(ang);
+
+    let mapX = px|0, mapY = py|0;
+
+    const deltaDistX = Math.abs(1 / (cos || 1e-9));
+    const deltaDistY = Math.abs(1 / (sin || 1e-9));
+
+    let stepX, stepY;
+    let sideDistX, sideDistY;
+
+    if (cos < 0) {
+      stepX = -1;
+      sideDistX = (px - mapX) * deltaDistX;
+    } else {
+      stepX = 1;
+      sideDistX = (mapX + 1.0 - px) * deltaDistX;
+    }
+
+    if (sin < 0) {
+      stepY = -1;
+      sideDistY = (py - mapY) * deltaDistY;
+    } else {
+      stepY = 1;
+      sideDistY = (mapY + 1.0 - py) * deltaDistY;
+    }
+
+    let hit = 0;
+    let side = 0; // 0 x, 1 y
+
+    for (let i=0;i<64;i++) {
+      if (sideDistX < sideDistY) {
+        sideDistX += deltaDistX;
+        mapX += stepX;
+        side = 0;
+      } else {
+        sideDistY += deltaDistY;
+        mapY += stepY;
+        side = 1;
+      }
+      hit = cell(mapX, mapY);
+      if (hit !== 0) break;
+    }
+
+    let dist;
+    if (side === 0) dist = (mapX - px + (1 - stepX)/2) / (cos || 1e-9);
+    else dist = (mapY - py + (1 - stepY)/2) / (sin || 1e-9);
+
+    dist = Math.max(0.001, dist);
+    return { dist, side, hit, mapX, mapY };
+  }
+
+  function tryMove(dx, dy) {
+    const r = 0.18;
+    let nx = player.x + dx;
+    let ny = player.y + dy;
+
+    // slide along walls
+    if (!isWall(nx + Math.sign(dx)*r, player.y) && !isWall(nx, player.y)) player.x = nx;
+    if (!isWall(player.x, ny + Math.sign(dy)*r) && !isWall(player.x, ny)) player.y = ny;
+  }
+
+  function shoot() {
+    if (shootCooldown > 0) return;
+    if (player.ammo <= 0) { msg.textContent = ' (click: out of ammo)'; return; }
+
+    shootCooldown = 0.22;
+    player.ammo -= 1;
+
+    // hitscan: find closest enemy near crosshair line-of-sight
+    const aim = player.a;
+
+    let best = null;
+    let bestDist = 1e9;
+
+    for (const e of enemies) {
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 0.2) continue;
+
+      const ang = Math.atan2(dy, dx);
+      let dA = ((ang - aim + Math.PI*3) % (Math.PI*2)) - Math.PI; // [-pi,pi]
+
+      // within a narrow cone around aim
+      if (Math.abs(dA) > 0.06) continue;
+
+      // simple LoS: cast ray to enemy direction, ensure wall farther than enemy
+      const hit = raycast(player.x, player.y, ang);
+      if (hit.dist + 0.2 < dist) continue;
+
+      if (dist < bestDist) { bestDist = dist; best = e; }
+    }
+
+    // tracer
+    bullets.push({ t: 0.08 });
+
+    if (best) {
+      best.hp -= 20;
+      if (best.hp <= 0) {
+        player.score += 100;
+        // respawn after a beat
+        enemies.splice(enemies.indexOf(best), 1);
+        spawnEnemy();
+      } else {
+        player.score += 10;
+      }
+      syncHud();
+    }
+  }
+
+  function updateEnemies(dt) {
+    for (const e of enemies) {
+      e.t += dt;
+      if (e.cooldown > 0) e.cooldown -= dt;
+
+      // simple chase: step toward player if line-of-sight-ish
+      const dx = player.x - e.x;
+      const dy = player.y - e.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 0.6) {
+        // melee-ish damage
+        if (e.cooldown <= 0) {
+          e.cooldown = 0.6;
+          player.hp -= 8;
+          player.hurtT = 0.25;
+          if (player.hp <= 0) {
+            player.hp = 0;
+            running = false;
+            overlay.style.display = 'flex';
+            overlay.querySelector('h1').textContent = 'You died.';
+            overlay.querySelector('p').textContent = 'Press Start to try again.';
+          }
+          syncHud();
+        }
+        continue;
+      }
+
+      // occasionally move
+      const speed = 0.55;
+      const step = Math.min(0.04, dt) * speed;
+
+      // LoS check
+      const ang = Math.atan2(dy, dx);
+      const hit = raycast(e.x, e.y, ang);
+      if (hit.dist < dist - 0.2) {
+        // wander
+        const wa = e.t*0.9;
+        const wx = Math.cos(wa) * step;
+        const wy = Math.sin(wa) * step;
+        if (!isWall(e.x + wx, e.y)) e.x += wx;
+        if (!isWall(e.x, e.y + wy)) e.y += wy;
+      } else {
+        // chase
+        const mx = (dx / dist) * step;
+        const my = (dy / dist) * step;
+        if (!isWall(e.x + mx, e.y)) e.x += mx;
+        if (!isWall(e.x, e.y + my)) e.y += my;
+      }
+    }
+  }
+
+  function syncHud() {
+    hpText.textContent = String(player.hp|0);
+    ammoText.textContent = String(player.ammo|0);
+    scoreText.textContent = String(player.score|0);
+
+    hpBar.style.width = clamp(player.hp,0,100) + '%';
+    ammoBar.style.width = clamp(player.ammo,0,50) / 50 * 100 + '%';
+    scoreBar.style.width = clamp(player.score,0,1000) / 1000 * 100 + '%';
+  }
+
+  function togglePause() {
+    if (!running) return;
+    paused = !paused;
+    msg.textContent = paused ? ' (paused)' : '';
+  }
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+
+    // sky and floor
+    ctx.fillStyle = '#0a0f1b';
+    ctx.fillRect(0, 0, w, h/2);
+    ctx.fillStyle = '#07060a';
+    ctx.fillRect(0, h/2, w, h/2);
+
+    // subtle floor gradient
+    const grad = ctx.createLinearGradient(0, h/2, 0, h);
+    grad.addColorStop(0, 'rgba(255,255,255,0.04)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.0)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, h/2, w, h/2);
+
+    // Raycast walls
+    const zBuffer = new Float32Array(w);
+
+    for (let x=0; x<w; x++) {
+      const camX = (2 * x / w) - 1; // -1..1
+      const ang = player.a + camX * (player.fov/2);
+
+      const hit = raycast(player.x, player.y, ang);
+      // fix fisheye
+      const dist = hit.dist * Math.cos(ang - player.a);
+      zBuffer[x] = dist;
+
+      const lineH = Math.min(h, (h / dist));
+      const y0 = (h - lineH)/2;
+
+      // wall shading
+      const base = hit.hit === 2 ? 200 : 255;
+      let shade = base / (1 + dist*dist*0.12);
+      if (hit.side === 1) shade *= 0.75;
+
+      ctx.fillStyle = `rgb(${shade|0},${(shade*0.35)|0},${(shade*0.35)|0})`;
+      ctx.fillRect(x, y0, 1, lineH);
+    }
+
+    // Sprites (enemies)
+    // Sort by distance far->near
+    const order = enemies
+      .map(e => ({ e, d: (e.x-player.x)**2 + (e.y-player.y)**2 }))
+      .sort((a,b) => b.d - a.d);
+
+    for (const item of order) {
+      const e = item.e;
+      const dx = e.x - player.x;
+      const dy = e.y - player.y;
+      const dist = Math.hypot(dx, dy);
+
+      const ang = Math.atan2(dy, dx);
+      let rel = ((ang - player.a + Math.PI*3) % (Math.PI*2)) - Math.PI;
+
+      // in FOV?
+      if (Math.abs(rel) > player.fov/2 + 0.2) continue;
+
+      const projX = (rel / (player.fov/2)) * (canvas.width/2) + canvas.width/2;
+      const size = Math.min(canvas.height, (canvas.height / (dist)) * 0.6);
+      const y0 = canvas.height/2 - size/2;
+      const x0 = projX - size/2;
+
+      // simple occlusion with zBuffer
+      const sx0 = Math.max(0, x0|0);
+      const sx1 = Math.min(canvas.width-1, (x0+size)|0);
+
+      // draw as a red billboard rectangle with face
+      for (let sx=sx0; sx<=sx1; sx++) {
+        if (zBuffer[sx] + 0.05 < dist) continue;
+        const u = (sx - x0) / size;
+
+        // sprite texture-ish shading
+        const edge = (u<0.08 || u>0.92) ? 0.65 : 1;
+        const pulse = 0.85 + 0.15*Math.sin(e.t*6);
+        const r = (255 * edge * pulse) | 0;
+        const g = (60  * edge) | 0;
+        const b = (60  * edge) | 0;
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.fillRect(sx, y0, 1, size);
+      }
+
+      // eyes
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillRect(x0 + size*0.28, y0 + size*0.28, size*0.12, size*0.10);
+      ctx.fillRect(x0 + size*0.60, y0 + size*0.28, size*0.12, size*0.10);
+
+      // health hint
+      if (dist < 2.5) {
+        ctx.fillStyle = 'rgba(255,255,255,0.25)';
+        ctx.fillRect(x0, y0-4, size, 3);
+        ctx.fillStyle = 'rgba(255,80,80,0.85)';
+        ctx.fillRect(x0, y0-4, size * (e.hp/30), 3);
+      }
+    }
+
+    // weapon overlay
+    ctx.save();
+    const bob = running && !paused ? Math.sin(performance.now()*0.01)*2 : 0;
+    ctx.translate(0, bob);
+
+    // gun
+    ctx.fillStyle = '#151822';
+    ctx.fillRect(w*0.62, h*0.72, w*0.30, h*0.22);
+    ctx.fillStyle = '#2a2f45';
+    ctx.fillRect(w*0.68, h*0.70, w*0.18, h*0.06);
+    ctx.fillStyle = '#3b3f55';
+    ctx.fillRect(w*0.73, h*0.68, w*0.08, h*0.05);
+
+    // muzzle flash
+    if (shootCooldown > 0.18) {
+      ctx.fillStyle = 'rgba(255,220,120,0.75)';
+      ctx.fillRect(w*0.76, h*0.66, w*0.06, h*0.06);
+    }
+    ctx.restore();
+
+    // crosshair
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillRect(w/2-8, h/2, 16, 1);
+    ctx.fillRect(w/2, h/2-8, 1, 16);
+
+    // hurt vignette
+    if (player.hurtT > 0) {
+      ctx.fillStyle = `rgba(255,0,0,${0.25*player.hurtT/0.25})`;
+      ctx.fillRect(0,0,w,h);
+    }
+
+    // pause text
+    if (paused) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0,0,w,h);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px ui-monospace, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('PAUSED', w/2, h/2);
+      ctx.textAlign = 'left';
+    }
+
+    // minimap
+    drawMiniMap();
+  }
+
+  function drawMiniMap() {
+    const s = 4;
+    const pad = 8;
+    const ox = canvas.width - MW*s - pad;
+    const oy = pad;
+    ctx.globalAlpha = 0.9;
+
+    for (let y=0; y<MH; y++) {
+      for (let x=0; x<MW; x++) {
+        const v = MAP[y][x];
+        ctx.fillStyle = v ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.35)';
+        ctx.fillRect(ox + x*s, oy + y*s, s, s);
+      }
+    }
+
+    // enemies
+    for (const e of enemies) {
+      ctx.fillStyle = 'rgba(255,80,80,0.8)';
+      ctx.fillRect(ox + (e.x*s)|0, oy + (e.y*s)|0, 2, 2);
+    }
+
+    // player
+    ctx.fillStyle = 'rgba(120,200,255,0.95)';
+    ctx.fillRect(ox + (player.x*s)|0, oy + (player.y*s)|0, 2, 2);
+    ctx.strokeStyle = 'rgba(120,200,255,0.65)';
+    ctx.beginPath();
+    ctx.moveTo(ox + player.x*s, oy + player.y*s);
+    ctx.lineTo(ox + (player.x + Math.cos(player.a)*0.8)*s, oy + (player.y + Math.sin(player.a)*0.8)*s);
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+  }
+
+  function update(dt) {
+    const turn = 2.4; // rad/s
+    const speed = keys.Shift ? 3.0 : 2.0;
+
+    if (keys.ArrowLeft) player.a -= turn * dt;
+    if (keys.ArrowRight) player.a += turn * dt;
+
+    const fx = Math.cos(player.a);
+    const fy = Math.sin(player.a);
+    const sx = -fy;
+    const sy = fx;
+
+    let mvx = 0, mvy = 0;
+    if (keys.w || keys.W) { mvx += fx; mvy += fy; }
+    if (keys.s || keys.S) { mvx -= fx; mvy -= fy; }
+    // Strafe: A left, D right
+    if (keys.a || keys.A) { mvx -= sx; mvy -= sy; }
+    if (keys.d || keys.D) { mvx += sx; mvy += sy; }
+
+    const len = Math.hypot(mvx, mvy) || 1;
+    mvx /= len; mvy /= len;
+
+    tryMove(mvx * speed * dt, mvy * speed * dt);
+
+    if (keys[' '] ) shoot();
+
+    if (shootCooldown > 0) shootCooldown -= dt;
+    if (player.hurtT > 0) player.hurtT -= dt;
+
+    // slowly drip ammo as a “pickups” stand-in
+    if (player.ammo < 50) player.ammo += dt*1.5;
+
+    updateEnemies(dt);
+
+    // trim tracers
+    for (const b of bullets) b.t -= dt;
+    while (bullets.length && bullets[0].t <= 0) bullets.shift();
+
+    syncHud();
+  }
+
+  function loop(ts) {
+    if (!last) last = ts;
+    const dt = Math.min(0.05, (ts - last) / 1000);
+    last = ts;
+
+    if (running && !paused) update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // Pointer lock for mouse-look
+  function onMouseMove(e) {
+    if (!running || paused) return;
+    if (document.pointerLockElement !== canvas) return;
+    const sens = 0.0023;
+    player.a += e.movementX * sens;
+  }
+  document.addEventListener('mousemove', onMouseMove);
+
+  canvas.addEventListener('click', async () => {
+    if (!running) return;
+    try {
+      await canvas.requestPointerLock();
+      msg.textContent = ' (pointer locked)';
+    } catch {
+      msg.textContent = '';
+    }
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement !== canvas) msg.textContent = '';
+  });
+
+  btnStart.addEventListener('click', () => {
+    overlay.style.display = 'none';
+    reset();
+    running = true;
+    last = 0;
+  });
+
+  // Start rendering immediately
+  syncHud();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
