@@ -39,6 +39,7 @@
     #overlay button:hover{ border-color:rgba(255,255,255,0.3); }
 
     /* Touch controls (shown on mobile) */
+    body.touch #ui kbd{ display:none; }
     #touch{ position:fixed; inset:0; z-index:4; pointer-events:none; display:none; }
     #touch .pad{ position:absolute; pointer-events:auto; touch-action:none; user-select:none; }
     #joy{ left:18px; bottom:120px; width:140px; height:140px; border-radius:999px;
@@ -121,6 +122,7 @@
   const overlay = document.getElementById('overlay');
   const btnStart = document.getElementById('btnStart');
   const msg = document.getElementById('msg');
+  const ui = document.getElementById('ui');
 
   const hpText = document.getElementById('hpText');
   const ammoText = document.getElementById('ammoText');
@@ -219,7 +221,12 @@
   addEventListener('keyup', e => { keys[e.key] = false; });
 
   // Touch controls
-  const isMobile = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
+  const isMobile = (
+    ('ontouchstart' in window) ||
+    (navigator.maxTouchPoints > 0) ||
+    (matchMedia && matchMedia('(pointer:coarse)').matches) ||
+    (/Android|iPhone|iPad|iPod|Mobi/i.test(navigator.userAgent))
+  );
   const touch = {
     forward: 0,  // -1..1 (up is +1)
     strafe: 0,   // -1..1
@@ -236,8 +243,18 @@
 
   if (isMobile) {
     touchRoot.style.display = 'block';
-    // On mobile we don't try pointer lock; the hint text is different.
+    document.body.classList.add('touch');
+    // On mobile we don't try pointer lock; swap the help text.
     msg.textContent = ' (touch controls enabled)';
+    if (ui) {
+      const lines = ui.querySelectorAll('div');
+      if (lines && lines[1]) {
+        lines[1].textContent = 'Touch: left stick move • right-side drag look • RUN • SHOOT';
+      }
+      if (lines && lines[2]) {
+        lines[2].textContent = 'Tip: use the on-screen controls below.';
+      }
+    }
 
     // Right-side drag to look
     let lookPointerId = null;
