@@ -37,6 +37,26 @@
     #overlay button{ margin-top:10px; border-radius:12px; border:1px solid rgba(255,255,255,0.18);
       background:rgba(255,255,255,0.06); color:var(--fg); padding:10px 14px; cursor:pointer; }
     #overlay button:hover{ border-color:rgba(255,255,255,0.3); }
+
+    /* Touch controls (shown on mobile) */
+    #touch{ position:fixed; inset:0; z-index:4; pointer-events:none; display:none; }
+    #touch .pad{ position:absolute; pointer-events:auto; touch-action:none; user-select:none; }
+    #joy{ left:18px; bottom:120px; width:140px; height:140px; border-radius:999px;
+      background:rgba(0,0,0,0.18); border:2px solid rgba(255,255,255,0.18);
+      backdrop-filter: blur(4px);
+    }
+    #joy .knob{ position:absolute; left:50%; top:50%; width:56px; height:56px; margin-left:-28px; margin-top:-28px;
+      border-radius:999px; background:rgba(255,255,255,0.22); border:2px solid rgba(255,255,255,0.24);
+    }
+    #btns{ right:18px; bottom:118px; display:flex; flex-direction:column; gap:12px; align-items:flex-end; }
+    .tbtn{ width:96px; height:56px; border-radius:18px; display:flex; align-items:center; justify-content:center;
+      background:rgba(0,0,0,0.20); border:2px solid rgba(255,255,255,0.18);
+      color:rgba(255,255,255,0.92); font-weight:800; letter-spacing:0.5px;
+    }
+    .tbtn:active{ transform: translateY(1px); }
+    #hintTouch{ position:absolute; left:12px; right:12px; bottom:16px; text-align:center; color:rgba(255,255,255,0.72);
+      font-size:12px; pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -53,6 +73,16 @@
   </div>
 
   <canvas id="view" width="320" height="180" aria-label="Game view"></canvas>
+
+  <!-- Touch UI (mobile) -->
+  <div id="touch" aria-hidden="true">
+    <div id="joy" class="pad"><div class="knob" id="knob"></div></div>
+    <div id="btns" class="pad">
+      <div class="tbtn" id="btnShoot">SHOOT</div>
+      <div class="tbtn" id="btnRun">RUN</div>
+    </div>
+    <div id="hintTouch">Drag left stick to move • Tap SHOOT • Drag right side to look</div>
+  </div>
 
   <div id="hud">
     <div class="stat">
@@ -187,6 +217,115 @@
   const keys = Object.create(null);
   addEventListener('keydown', e => { keys[e.key] = true; if (e.key.toLowerCase()==='p') togglePause(); });
   addEventListener('keyup', e => { keys[e.key] = false; });
+
+  // Touch controls
+  const isMobile = matchMedia('(pointer:coarse)').matches || navigator.maxTouchPoints > 0;
+  const touch = {
+    forward: 0,  // -1..1 (up is +1)
+    strafe: 0,   // -1..1
+    turn: 0,     // -1..1 (from swipe)
+    run: false,
+    shootQueued: false,
+  };
+
+  const touchRoot = document.getElementById('touch');
+  const joy = document.getElementById('joy');
+  const knob = document.getElementById('knob');
+  const btnShoot = document.getElementById('btnShoot');
+  const btnRun = document.getElementById('btnRun');
+
+  if (isMobile) {
+    touchRoot.style.display = 'block';
+    // On mobile we don't try pointer lock; the hint text is different.
+    msg.textContent = ' (touch controls enabled)';
+
+    // Right-side drag to look
+    let lookPointerId = null;
+    let lastLookX = 0;
+    let lookActive = false;
+
+    addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      // Ignore if the user is interacting with the UI pads
+      if (e.target && (e.target.closest && e.target.closest('#joy, #btns'))) return;
+      if (e.clientX < innerWidth * 0.5) return;
+      lookPointerId = e.pointerId;
+      lastLookX = e.clientX;
+      lookActive = true;
+    }, { passive: true });
+
+    addEventListener('pointermove', (e) => {
+      if (!lookActive || e.pointerId !== lookPointerId) return;
+      const dx = e.clientX - lastLookX;
+      lastLookX = e.clientX;
+      // Convert pixels to normalized turn; tuned for phones.
+      touch.turn = clamp(dx / 90, -1, 1);
+    }, { passive: true });
+
+    addEventListener('pointerup', (e) => {
+      if (e.pointerId === lookPointerId) {
+        lookActive = false;
+        lookPointerId = null;
+        touch.turn = 0;
+      }
+    }, { passive: true });
+
+    // Joystick
+    let joyId = null;
+    let joyCX = 0, joyCY = 0;
+    const joyRadius = 52;
+
+    joy.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      joyId = e.pointerId;
+      const r = joy.getBoundingClientRect();
+      joyCX = r.left + r.width / 2;
+      joyCY = r.top + r.height / 2;
+      joy.setPointerCapture(joyId);
+    });
+
+    joy.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== joyId) return;
+      const dx = e.clientX - joyCX;
+      const dy = e.clientY - joyCY;
+      const d = Math.hypot(dx, dy) || 1;
+      const k = Math.min(1, d / joyRadius);
+      const nx = (dx / d) * k;
+      const ny = (dy / d) * k;
+
+      // Update stick
+      knob.style.transform = `translate(${nx * joyRadius}px, ${ny * joyRadius}px)`;
+
+      // Map to movement (up is forward)
+      touch.strafe = clamp(nx, -1, 1);
+      touch.forward = clamp(-ny, -1, 1);
+    });
+
+    const joyEnd = () => {
+      joyId = null;
+      knob.style.transform = 'translate(0px, 0px)';
+      touch.forward = 0;
+      touch.strafe = 0;
+    };
+
+    joy.addEventListener('pointerup', joyEnd);
+    joy.addEventListener('pointercancel', joyEnd);
+
+    // Buttons
+    btnShoot.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      touch.shootQueued = true;
+      e.preventDefault();
+    });
+
+    btnRun.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      touch.run = true;
+      e.preventDefault();
+    });
+    btnRun.addEventListener('pointerup', () => { touch.run = false; });
+    btnRun.addEventListener('pointercancel', () => { touch.run = false; });
+  }
 
   // Player
   const player = {
@@ -623,10 +762,14 @@
 
   function update(dt) {
     const turn = 2.4; // rad/s
-    const speed = keys.Shift ? 3.0 : 2.0;
+    const speed = (keys.Shift || touch.run) ? 3.0 : 2.0;
 
+    // Keyboard turn
     if (keys.ArrowLeft) player.a -= turn * dt;
     if (keys.ArrowRight) player.a += turn * dt;
+
+    // Touch turn (right-side swipe)
+    if (isMobile && touch.turn) player.a += (touch.turn * turn) * dt;
 
     const fx = Math.cos(player.a);
     const fy = Math.sin(player.a);
@@ -634,11 +777,19 @@
     const sy = fx;
 
     let mvx = 0, mvy = 0;
+
+    // Keyboard move
     if (keys.w || keys.W) { mvx += fx; mvy += fy; }
     if (keys.s || keys.S) { mvx -= fx; mvy -= fy; }
     // Strafe: A left, D right
     if (keys.a || keys.A) { mvx -= sx; mvy -= sy; }
     if (keys.d || keys.D) { mvx += sx; mvy += sy; }
+
+    // Touch move (left joystick)
+    if (isMobile) {
+      mvx += (touch.forward * fx) + (touch.strafe * sx);
+      mvy += (touch.forward * fy) + (touch.strafe * sy);
+    }
 
     const len = Math.hypot(mvx, mvy) || 1;
     mvx /= len; mvy /= len;
@@ -646,6 +797,7 @@
     tryMove(mvx * speed * dt, mvy * speed * dt);
 
     if (keys[' '] ) shoot();
+    if (isMobile && touch.shootQueued) { touch.shootQueued = false; shoot(); }
 
     if (shootCooldown > 0) shootCooldown -= dt;
     if (player.hurtT > 0) player.hurtT -= dt;
