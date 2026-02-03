@@ -90,7 +90,11 @@
 
     <div id="aim" class="pad"><div class="knob" id="aimKnob"></div></div>
 
-    <div id="hintTouch">Left stick: move/strafe • Right stick: aim • Tap right stick to shoot</div>
+    <div id="btns" class="pad">
+      <div class="tbtn" id="btnShoot">SHOOT</div>
+    </div>
+
+    <div id="hintTouch">Left stick: move/strafe • Right stick: aim • SHOOT button</div>
   </div>
 
   <div id="hud">
@@ -247,6 +251,7 @@
   const knob = document.getElementById('knob');
   const aim = document.getElementById('aim');
   const aimKnob = document.getElementById('aimKnob');
+  const btnShoot = document.getElementById('btnShoot');
 
   if (isMobile) {
     touchRoot.style.display = 'block';
@@ -256,7 +261,7 @@
     if (ui) {
       const lines = ui.querySelectorAll('div');
       if (lines && lines[1]) {
-        lines[1].textContent = 'Touch: left stick move • right stick aim • tap right stick to shoot • RUN';
+        lines[1].textContent = 'Touch: left stick move • right stick aim • SHOOT button';
       }
       if (lines && lines[2]) {
         lines[2].textContent = 'Tip: use the on-screen controls below.';
@@ -344,11 +349,7 @@
 
     const aimEnd = () => {
       if (aimId == null) return;
-      const dt = performance.now() - aimDownTs;
-      // Tap-to-shoot: be generous so taps always register.
-      // If the finger didn't move much, treat it as a tap even if held briefly.
-      if (aimMaxDist < 18 && dt < 450) touch.shootQueued = true;
-
+      // End aiming
       aimId = null;
       aimKnob.style.transform = 'translate(0px, 0px)';
       touch.turn = 0;
@@ -356,6 +357,13 @@
 
     aim.addEventListener('pointerup', aimEnd);
     aim.addEventListener('pointercancel', aimEnd);
+
+    // Shoot button (more reliable than tap-to-shoot on the stick)
+    btnShoot.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      touch.shootQueued = true;
+      e.preventDefault();
+    });
   }
 
   // Player
