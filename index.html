@@ -403,12 +403,16 @@
       const lineH = Math.min(h, (h / dist));
       const y0 = (h - lineH)/2;
 
-      // wall shading
+      // wall shading (blue)
       const base = hit.hit === 2 ? 200 : 255;
-      let shade = base / (1 + dist*dist*0.12);
+      let shade = base / (1 + dist * dist * 0.12);
       if (hit.side === 1) shade *= 0.75;
 
-      ctx.fillStyle = `rgb(${shade|0},${(shade*0.35)|0},${(shade*0.35)|0})`;
+      // Blue walls: keep monsters red below.
+      const r = (shade * 0.25) | 0;
+      const g = (shade * 0.45) | 0;
+      const b = (shade * 1.00) | 0;
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
       ctx.fillRect(x, y0, 1, lineH);
     }
 
