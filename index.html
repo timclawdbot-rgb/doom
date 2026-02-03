@@ -49,7 +49,7 @@
     #joy .knob{ position:absolute; left:50%; top:50%; width:56px; height:56px; margin-left:-28px; margin-top:-28px;
       border-radius:999px; background:rgba(255,255,255,0.22); border:2px solid rgba(255,255,255,0.24);
     }
-    #btns{ right:18px; bottom:118px; display:flex; flex-direction:column; gap:12px; align-items:flex-end; }
+    #btns{ right:18px; bottom:270px; display:flex; flex-direction:column; gap:12px; align-items:flex-end; }
     .tbtn{ width:96px; height:56px; border-radius:18px; display:flex; align-items:center; justify-content:center;
       background:rgba(0,0,0,0.20); border:2px solid rgba(255,255,255,0.18);
       color:rgba(255,255,255,0.92); font-weight:800; letter-spacing:0.5px;
@@ -341,7 +341,7 @@
       aimKnob.style.transform = `translate(${nx * joyRadius}px, ${ny * joyRadius}px)`;
 
       // Aim stick: horizontal controls turning.
-      touch.turn = clamp(nx, -1, 1);
+      touch.turn = clamp(nx * 1.6, -1, 1);
       // (Optional) you could add vertical look later; engine is yaw-only.
       void ny;
     });
