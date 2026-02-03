@@ -308,13 +308,13 @@
     let aimId = null;
     let aimCX = 0, aimCY = 0;
     let aimDownTs = 0;
-    let aimMoved = false;
+    let aimMaxDist = 0;
 
     aim.addEventListener('pointerdown', (e) => {
       if (e.pointerType !== 'touch') return;
       aimId = e.pointerId;
       aimDownTs = performance.now();
-      aimMoved = false;
+      aimMaxDist = 0;
       const r = aim.getBoundingClientRect();
       aimCX = r.left + r.width / 2;
       aimCY = r.top + r.height / 2;
@@ -331,7 +331,8 @@
       const nx = (dx / d) * k;
       const ny = (dy / d) * k;
 
-      if (d > 10) aimMoved = true;
+      // Track max finger displacement to distinguish a tap from aiming.
+      if (d > aimMaxDist) aimMaxDist = d;
 
       aimKnob.style.transform = `translate(${nx * joyRadius}px, ${ny * joyRadius}px)`;
 
@@ -344,8 +345,9 @@
     const aimEnd = () => {
       if (aimId == null) return;
       const dt = performance.now() - aimDownTs;
-      // Tap: shoot
-      if (!aimMoved && dt < 250) touch.shootQueued = true;
+      // Tap-to-shoot: be generous so taps always register.
+      // If the finger didn't move much, treat it as a tap even if held briefly.
+      if (aimMaxDist < 18 && dt < 450) touch.shootQueued = true;
 
       aimId = null;
       aimKnob.style.transform = 'translate(0px, 0px)';
